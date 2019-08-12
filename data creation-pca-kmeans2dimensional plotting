@@ -1,0 +1,528 @@
+
+# coding: utf-8
+
+# In[1]:
+
+
+import numpy as np
+import scipy.stats as stats
+from sklearn.cluster import KMeans
+import pandas as pd
+import random as random
+z_lower = np.array([10, 12, 16, 17, 20, 4, 6, 7.5, 8.5, 15, 4.5, 6, 7.5, 8, 10, 10.5, 15, 17, 18, 19, 20, 14, 16, 18, 20, 25])
+z_upper = np.array([23, 21, 24, 25, 26, 6, 10.5, 11, 12, 17.5, 8, 9, 10, 11, 12, 12.5, 21, 22, 23, 26, 27, 20, 21, 24, 28, 31])
+z_mean = np.array([15, 16, 20, 22, 23, 10, 8, 9, 10, 16, 6, 7, 9, 10, 10.5, 12, 18, 20, 21, 23, 25, 16, 18, 22, 24, 28])
+sigma = 1
+n_samples = 2000
+
+norm_dist = []
+z = np.empty([12, n_samples, len(z_mean)])
+print(len(z))
+
+# 初始数据
+for i in range(len(z_mean)):
+    dist = stats.truncnorm((z_lower[i] - z_mean[i]) / sigma, (z_upper[i] - z_mean[i]) / sigma, loc=z_mean[i], scale=sigma)
+    z[0, :, i] = dist.rvs(n_samples)
+# 基于上一轮 z[n] 数据的均值和协方差矩阵创立的下一个 z[n+1]轮数据
+for n in range(10):
+    # 加入一个随机的偏移 
+    # 偏移的量为 Theta (default=1)
+    Theta= 1
+    norm_dist.append((np.mean(z[n], axis=0)+Theta*random.random(), np.cov(z[n], rowvar=0)))
+    z[n+1] = np.random.multivariate_normal(norm_dist[n][0], norm_dist[n][1],n_samples)
+
+#最后一轮数据是前面10轮数据的抽样综合
+for n in range(10):
+    #bug 1
+    z[11, (n * n_samples // 10):(n * n_samples // 10 + n_samples //10)] =  np.random.multivariate_normal(norm_dist[n][0], norm_dist[n][1],n_samples//10)
+        
+k_means_array = []
+in_class_variance = np.zeros(49)
+#  potential bug 3
+total_variance = np.var(z[10]) * len(z[10])
+percentage = 2
+for i in range(2, len(in_class_variance) + 2):
+    
+    kmeans = KMeans(n_clusters=i, random_state=0).fit(z[10])
+    k_means_array.append(kmeans)
+    labels = kmeans.labels_
+    percentage += 2
+    for j in range(i):
+        #bug 2
+        z_sub = [z[10,n] for n in range(n_samples) if labels[n] == j]
+        in_class_variance[i - 2] += np.var(z_sub) * len(z_sub)
+    print("Process completed by " + str(percentage) + "%")
+
+print(total_variance)
+print(in_class_variance / total_variance)
+
+
+# #  Adding offset value(Theta) for mean of original data, Theta( default =1）
+
+# In[67]:
+
+
+import matplotlib.pyplot as plt
+plt.plot(range(2, len(in_class_variance) + 2), in_class_variance / total_variance)
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+plt.plot(range(2, len(in_class_variance) + 2), in_class_variance )
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+
+
+# # Bug identification
+
+# 1. In python 3, division using the / operator always does floating point division, even if the numbers on both sides of the operator are integers. We use // instead of / to avoid this situation
+# 
+# 2. bug 2& 3: z[10,n] instead of z[n], for z is a (12,2000,26) matrix and the labeled result matched with the middle of z( number of sample in z[10]).  
+
+# # NEXT STEP 
+
+# We have test the z[10], then we try to combine all the data you have created from z[0] to z[11] 
+
+# In[3]:
+
+
+z.shape
+
+
+# In[4]:
+
+
+z[0].shape
+z[10].shape
+
+
+# In[5]:
+
+
+# Combine all the data into one data set 
+z_new=z[0]
+for k in range(11):
+    z_new=np.vstack(( z_new,z[k+1]))
+z_new.shape
+
+
+# In[51]:
+
+
+import numpy as np
+from sklearn.metrics import silhouette_score
+# 封装一下YIZHE的工作到一个函数
+# data must including two parts, one is the number of sample and the other is the information included in each sample
+def Yizhe_kmeans(data,max_clusters):
+    # storage of kmenas result
+    k_means_array=[]
+    #  Vector of in calss variance with different case, like different clusters 
+    in_class_variance_vector = np.zeros(max_clusters)
+    score_of_silhouette_coefficient=np.zeros(max_clusters)
+    total_variance = np.var(data) * len(data)
+    percentage = 2
+    # Number of clusters in defined by the number of vectors in I_c_v_v
+    for i in range(2, len(in_class_variance_vector) + 2):
+        kmeans = KMeans(n_clusters=i, random_state=0).fit(data)
+        k_means_array.append(kmeans)
+        labels = kmeans.labels_
+        percentage += 2
+        for j in range(i):      
+            z_sub = [data[n] for n in range(n_samples) if labels[n] == j]
+            in_class_variance_vector[i - 2] += np.var(z_sub) * len(z_sub)
+        score_of_silhouette_coefficient[i - 2] += silhouette_score(data,labels,metric="euclidean")
+        #print("Process completed by " + str(percentage) + "%",end='    ')
+    labels=labels.reshape(1,len(labels))
+    print("total_variance \n",total_variance)
+    print("in_class_variance_vector / total_variance \n",in_class_variance_vector / total_variance)
+    print("score_of_silhouette_coefficient \n",score_of_silhouette_coefficient)
+    return (total_variance, (in_class_variance_vector / total_variance),labels,data,score_of_silhouette_coefficient)
+
+
+# In[ ]:
+
+
+plt.plot(range(2,49 + 2), Yizhe_kmeans(z_new,49)[1])
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+
+
+# In[7]:
+
+
+# Experiment for Z[11] if you need to test? z[11] combined the previous data as the final sample data.
+plt.plot(range(2,49 + 2), Yizhe_kmeans(z[11],49)[1])
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+
+plt.plot(range(2,49 + 2), Yizhe_kmeans(z[11],49)[4])
+plt.ylabel('silhouette_coefficient_score')
+plt.xlabel('k')
+plt.show()
+
+
+# # Question: did the mean of our 12 samples far away enough? 
+# 
+
+# In[9]:
+
+
+
+for i in range(11):
+    print (np.mean(z[i]))
+
+
+# # After adding the default value, mean of dataset seems more diverse 
+
+# In[11]:
+
+
+import pandas as pd
+
+
+# In[12]:
+
+
+df=pd.DataFrame(np.mean(z[0],axis=0))
+for i in range(11):
+    df=pd.concat([df,pd.DataFrame(np.mean(z[i+1],axis=0))],axis=1)
+df 
+
+
+# In[13]:
+
+
+# 增加一个函数，读入dataframe 数据，输入数据中的维度，可以直接看到,方便观察
+def addtitle_mean(df):
+    df.columns.name="Cluster's mean value in each dimension"
+    df.index.name="Number of clusters"
+    #添加标题
+    namedata=[]
+    for i in range(df.shape[1]):
+        namedata.append("dimension "+ str(i+1))
+    namedata
+    df.columns=namedata
+    return df
+
+
+# In[14]:
+
+
+#直观的看到数据的mean分布
+addtitle_mean(df)
+
+
+# # Conclusion and remark
+
+# 1.  Depend on your index of result in clustering, z[11] is no good than z_new(combined data) , probably because of the larger data in z_new？
+# 2.  Pro. Wang taught us to enlarge the distance of mean(or center) of clusters, what do you think?  ps: predefine cluster's mu and cov from papers or what??? remeber last day...
+
+# # Next Step : Cross Validation &  PCA 
+
+# 1. define the best number of clusters by cross validation( eg., cross fold  validation)
+# 2. Using PCA to reduce the dimensions.
+# 3. 2 & 3 dimensions will be developed in the follwing days.
+
+# # Try PCA 
+
+# In[15]:
+
+
+from sklearn.decomposition import PCA
+
+
+# In[16]:
+
+
+pca=PCA(n_components=2)
+z_pca=pca.fit_transform(z_new)
+
+
+# In[17]:
+
+
+z_pca
+
+
+# In[55]:
+
+
+Yizhe_kmeans(z_pca,49)
+
+
+# # Summery : PCA works, then we combine pca into preprocessing of original data as a new function
+
+# New function combined  pca process and kmeans, and show the RESULT by two section , "Before" & "After", each section we have 手肘法 & 轮廓系数
+
+# # Function Required Input : (1).  original data, (2).  number of components you want to left eg., 2 or 3 , (3). max cluster numbers for kmeans trial 
+
+# In[18]:
+
+
+# 创建一个函数，直接使用pca, 同时输出N维变量的PCA 
+
+from sklearn.decomposition import PCA
+
+def Pca_Kmeans(data,n_principle_components,max_clusters):
+    pca=PCA(n_components=n_principle_components)
+    data_pca=pca.fit_transform(data)
+    data_pca=Yizhe_kmeans(data_pca,max_clusters)
+    data=Yizhe_kmeans(data,max_clusters)
+    # Before PCA  in_class_variance / total_variance
+    plt.plot(range(2,max_clusters + 2), data[1])
+    plt.ylabel('in_class_variance / total_variance')
+    plt.xlabel('k')
+    plt.title("Before PCA ("+str(n_principle_components)+"Dimension)")
+    plt.show()
+    # Before PCA  silhouette_coefficient_score
+    plt.plot(range(2,max_clusters + 2), data[4])
+    plt.ylabel('silhouette_coefficient_score')
+    plt.xlabel('k')
+    plt.title("Before PCA ("+str(n_principle_components)+"Dimension)")
+    plt.show()
+    #After PCA
+    plt.plot(range(2,max_clusters + 2), data_pca[1])
+    plt.ylabel('in_class_variance / total_variance')
+    plt.xlabel('k')
+    plt.title("After PCA ("+str(n_principle_components)+"Dimension)")
+    plt.show()
+    #
+    plt.plot(range(2,max_clusters+ 2), data_pca[4])
+    plt.ylabel('silhouette_coefficient_score')
+    plt.xlabel('k')
+    plt.title("After PCA ("+str(n_principle_components)+"Dimension)")
+    plt.show()
+    return (data_pca)
+    
+
+
+# # Test of small sample by using two dataset, dataset one,z[10]: one of the resampleing data ,  dataset two,z[11]: sample of ten resampled datasets
+# # Rmarks:  two index, SSE and Silhouette Coefficient, 
+# # Test Target : Find out the best number of clusters (k)
+
+# In[30]:
+
+
+Pca_Kmeans(z[11],2,49)
+
+
+# In[31]:
+
+
+Pca_Kmeans(z[11],3,49)
+
+
+# In[33]:
+
+
+Pca_Kmeans(z[10],2,49)
+
+
+# In[34]:
+
+
+Pca_Kmeans(z[10],3,49)
+
+
+# # Next : find the sutable number of clusters 
+
+# Here kmeans is unsupervised learning , so we do not using cross valudation.
+# # We find suitable k based on the perfomance of number of clusters in kmeans showed in Elbow Method and Silhouette Coefficient    
+
+# # Question: Need talk about how present the K
+# 
+# 
+#  # 1. Here we assume the best k is 10 in the follwing steps  
+#  # 2. We will use Elbow Method to identifing the Elbow Point as the number of k
+
+# In[52]:
+
+
+def counting_best_k(data):
+    Declining_speed_VarianceScale=[]
+    for i in range(len(np.data)):
+        try:
+            Declining_speed_VarianceScale.append(data[i+1]//data[i])
+        except(RuntimeError, TypeError, NameError):
+            Declining_speed_VarianceScale.append.append(1)
+        
+            
+    print(max(Declining_speed_VarianceScale),Declining_speed_VarianceScale.index(max(Declining_speed_VarianceScale)))
+
+
+# In[ ]:
+
+
+Pca_Kmeans(z[11],2,49)[1]
+
+
+# In[68]:
+
+
+testdata90=np.array([0.6179982 ,  0.55975301,  0.53262729,  0.52292605,  0.51716845,
+        0.51445352,  0.51283989,  0.51222233,  0.51079478,  0.51001213,
+        0.50969442,  0.50886377,  0.50881597,  0.50838154,  0.50773418,
+        0.50693996,  0.50699274,  0.5061309 ,  0.50622545,  0.50568955,
+        0.50568968,  0.50559379,  0.50541636,  0.50495334,  0.50476589,
+        0.5045931 ,  0.50510537,  0.50448773,  0.50433594,  0.50425324,
+        0.50405388,  0.50419289,  0.50397098,  0.50400965,  0.50395337,
+        0.50372227,  0.50361443,  0.50349446,  0.5033351 ,  0.50327227,
+        0.50328088,  0.50320615,  0.50315932,  0.50312893,  0.50299433,
+        0.50284659,  0.50291133,  0.50280029,  0.50264204])
+plt.plot(range(2,49 + 2),testdata90)
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+
+test11=[]
+for i in range(len(testdata90)-1):
+    print (i)
+    print(testdata90[i])
+    print(float((testdata90[i]-testdata90[i+1])/testdata90[i]))
+    try:
+        test11.append((testdata90[i]-testdata90[i+1])/testdata90[i])
+    except(IndexError):
+        test11.append(1)
+test11
+
+
+# In[70]:
+
+
+plt.plot(range(2,48 + 2),test11)
+plt.ylabel('in_class_variance / total_variance')
+plt.xlabel('k')
+plt.show()
+
+
+# # Plot Clustering Result after PCA 
+
+# In[19]:
+
+
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
+def Pca_Kmeans_Fixed_k(data,fixed_clusters,n_principle_components):
+    # storage of kmenas result
+    pca=PCA(n_components=n_principle_components)
+    data_pca=pca.fit_transform(data)
+    k_means_array=[]
+    kmeans = KMeans(n_clusters=fixed_clusters, random_state=0).fit(data_pca)
+    k_means_array.append(kmeans)
+    labels = kmeans.labels_
+    labels=labels.reshape(1,len(labels))
+    data_pca_label=np.concatenate((labels.T,data_pca),axis=1)
+    return (data_pca_label)
+
+
+# In[14]:
+
+
+plot_data=Pca_Kmeans_Fixed_k(z[11],10,2)
+plot_data=pd.DataFrame(plot_data,columns=["number of index cluster ","principle component 1"  ,"principle component 2"])
+plot_data
+plot_data["number of index cluster "]==float(1)
+plot_data["number of index cluster "].astype('int')
+fig = plt.figure(figsize = (8,8))
+ax = fig.add_subplot(1,1,1) 
+ax.set_xlabel("principle component 1", fontsize = 15)
+ax.set_ylabel("principle component 2", fontsize = 15)
+ax.set_title('2 component PCA', fontsize = 20)
+
+
+targets = [0,1,2,3,4,5,6,7,8,9]
+colors = ['peru', 'g', 'b','r', 'c', 'k','salmon', 'gold', 'silver','y']
+for target, color in zip(targets,colors):
+    print(target)
+    internal_data= (plot_data["number of index cluster "] == target)
+    print( internal_data)
+    ax.scatter(plot_data.loc[internal_data, "principle component 1"]
+               , plot_data.loc[internal_data, "principle component 2"]
+               , c = color
+               , s = 50)
+ax.legend(targets)
+plt.show()
+
+
+# #  Plot Grap Still need modification, and we will test in a new file
+
+# #  Clustered index mapping back to original data
+
+# In[20]:
+
+
+# New function for output original data & index of cluster after PCA & Kmeans
+# 将原始数据和经过PCA和聚类处理后的index数据合并
+def labeldata_back_mapping(data_orignal,data_labels):
+    # the input of the data must be array and have same dimensions
+    print("original data shape is",data_orignal.shape)
+    print("labeled data shape is ",data_labels.shape)
+    combined_data=np.concatenate((data_labels.T,data_orignal),axis=1)
+    print("combined data shape is",combined_data.shape)
+    return combined_data
+
+
+# Test of sample data into combined data
+
+# In[21]:
+
+
+Test_combined_data=labeldata_back_mapping(z[11],(Pca_Kmeans(z[11],2,49))[2])
+
+
+#  Here the orignal data are combined with cluster info data (index) and we take a look of this data
+
+# In[100]:
+
+
+import pandas as pd
+# 创建一个函数，将得到的合并数据展示出来
+def addtitle_combined_data(data):
+    data=pd.DataFrame(data)
+    data.columns.name=("Value in original dataset")
+    data.index.name="data "
+    namedata=["index of cluster"]
+    for i in range(1,data.shape[1]):
+        namedata.append("dimension "+ str(i))
+    data.columns=namedata
+    return data
+
+
+# In[101]:
+
+
+combined_data_show=addtitle_combined_data(Test_combined_data)
+combined_data_show
+
+
+# # Output Centers from labeled index with original data 
+
+# Cluster centers are the mean of data inside clusters  
+
+# In[134]:
+
+
+# Here the output data stucture are DataFrame so 
+def Output_centers(data):
+    internal_data=data.groupby("index of cluster")
+    #groupby.mean() or   groupby.fliter(function ?)
+    internal_data=internal_data.mean()
+    namelist=[]
+    for i in range(internal_data.shape[1]):
+        namelist.append("Mean Value of dimension"+str(i+1))
+    internal_data.columns=namelist
+    
+    return internal_data
+
+
+# In[135]:
+
+
+Output_centers(combined_data_show)
+
+
+# # Resample Data -->Original Data --> PCA --> Kmeans --> Best K --> Original data with Labels--> Show with figure 
+# # Other function: Cneters of clusters in original data 
